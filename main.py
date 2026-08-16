@@ -10,8 +10,8 @@ PI = math.pi
 ROTATION_SPEED = [0.0, PI / 2, PI / 6]
 DT = 0.03
 
-shape = "cube"
 
+shape= "cube"
 
 class App:
   """Main application controller managing the view, loop, and input."""

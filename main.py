@@ -10,7 +10,7 @@ PI = math.pi
 ROTATION_SPEED = [0.0, PI / 2, PI / 6]
 DT = 0.03
 
-shape = "pyramid"
+shape = "cube"
 
 
 class App:

@@ -5,14 +5,14 @@ from controls import ControlPanel
 from shapes import Cube, Pyramid
 import numba
 
-RESOLUTION = [int(128 * 1.666), 128]
+RESOLUTION = [int(64 * 1.666), 64]
 CAMERA_DISTANCE = 1.9
 FOV = 60.0
 PI = np.pi
-ROTATION_SPEED = [0.0, 0.0, 0.0]
+ROTATION_SPEED = [0.0, PI / 6, 0.0]
 DT = 0.03
 
-shape = "pyramid"
+shape = "cube"
 
 
 class App:
@@ -118,15 +118,11 @@ class App:
     def draw_surface(self, projected_vertices, face, surface_normals, index, buffer, z_buffer, light_direction,
                      transformed_3d):
         v_indices = [face[0], face[1], face[2]]
-        points = sorted(
-            [(projected_vertices[i], transformed_3d[i]) for i in v_indices],
-            key=lambda item: item[0][1]
-        )
-
-        (p1, z1), (p2, z2), (p3, z3) = points
+        p1, p2, p3 = projected_vertices[v_indices[0]], projected_vertices[v_indices[1]], projected_vertices[
+            v_indices[2]]
+        z1, z2, z3 = transformed_3d[v_indices[0]][2], transformed_3d[v_indices[1]][2], transformed_3d[v_indices[2]][2]
 
         surface_normal = surface_normals[index]
-
         intensity = max(0.0, np.dot(surface_normal, light_direction))
         char_index = int(intensity * (len(self.gradient) - 1))
         shaded_char = self.gradient[char_index]
@@ -134,52 +130,43 @@ class App:
         width = self.resolution[0]
         height = self.resolution[1]
 
-        def draw_span(y, x_start, x_end, z_start, z_end):
-            if 0 <= y < height:
-                x_s_int = int(round(min(x_start, x_end)))
-                x_e_int = int(round(max(x_start, x_end)))
-                span_len = x_e_int - x_s_int
+        # 1. Compute bounding box of the triangle on screen
+        min_x = max(0, int(math.floor(min(p1[0], p2[0], p3[0]))))
+        max_x = min(width - 1, int(math.ceil(max(p1[0], p2[0], p3[0]))))
+        min_y = max(0, int(math.floor(min(p1[1], p2[1], p3[1]))))
+        max_y = min(height - 1, int(math.ceil(max(p1[1], p2[1], p3[1]))))
 
-                for x in range(max(0, x_s_int), min(width, x_e_int + 1)):
-                    t = 0.0 if span_len == 0 else (x - x_start) / (x_end - x_start + 1e-12)
-                    current_z = z_start + (z_end - z_start) * t
+        # Triangle area using edge function for barycentric coordinate weights
+        def edge_fn(a, b, c):
+            return (c[0] - a[0]) * (b[1] - a[1]) - (c[1] - a[1]) * (b[0] - a[0])
+
+        area = edge_fn(p1, p2, p3)
+        if abs(area) < 1e-5:
+            return  # Degenerate triangle
+
+        # 2. Loop through every pixel in the bounding box
+        for y in range(min_y, max_y + 1):
+            for x in range(min_x, max_x + 1):
+                p = np.array([x + 0.5, y + 0.5])  # Pixel center sampling
+
+                # Compute weights (barycentric coordinates)
+                w1 = edge_fn(p2, p3, p)
+                w2 = edge_fn(p3, p1, p)
+                w3 = edge_fn(p1, p2, p)
+
+                # If all weights have the same sign, the pixel is inside the triangle
+                if (w1 >= 0 and w2 >= 0 and w3 >= 0) or (w1 <= 0 and w2 <= 0 and w3 <= 0):
+                    # Normalize weights
+                    w1 /= area
+                    w2 /= area
+                    w3 /= area
+
+                    # Perspective-correct or linear Z interpolation
+                    current_z = w1 * z1 + w2 * z2 + w3 * z3
 
                     if current_z < z_buffer[y, x]:
                         z_buffer[y, x] = current_z
                         buffer[y, x] = shaded_char
-
-        y1, y2, y3 = int(p1[1]), int(p2[1]), int(p3[1])
-
-        if y3 == y1:
-            return
-
-        total_height = y3 - y1
-
-        for i in range(total_height + 1):
-            current_y = y1 + i
-            if not (0 <= current_y < height):
-                continue
-
-            second_half = i > y2 - y1 or y2 == y1
-            segment_height = y3 - y2 if second_half else y2 - y1
-            if segment_height == 0:
-                continue
-
-            alpha = i / total_height
-            beta = (i - (y2 - y1)) / segment_height if second_half else i / (y2 - y1 + 1e-12)
-
-            if second_half:
-                ax = p1[0] + (p3[0] - p1[0]) * alpha
-                az = z1[2] + (z3[2] - z1[2]) * alpha
-                bx = p2[0] + (p3[0] - p2[0]) * beta
-                bz = z2[2] + (z3[2] - z2[2]) * beta
-            else:
-                ax = p1[0] + (p3[0] - p1[0]) * alpha
-                az = z1[2] + (z3[2] - z1[2]) * alpha
-                bx = p1[0] + (p2[0] - p1[0]) * beta
-                bz = z1[2] + (z2[2] - z1[2]) * beta
-
-            draw_span(current_y, ax, bx, az, bz)
 
     def draw_edges(self, projected_vertices, buffer, z_buffer, transformed_3d):
         for edge in self.shape.edges:
